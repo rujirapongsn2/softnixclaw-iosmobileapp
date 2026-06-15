@@ -87,6 +87,10 @@ struct ChatView: View {
                                 .id(group.id)
                         }
                     }
+                    if session.isAwaitingAgentResponse && !session.isAgentRunning {
+                        AgentThinkingView()
+                            .id("agent-thinking")
+                    }
                     Color.clear.frame(height: 1).id("latest")
                 }
                 .padding(.vertical, 18)
@@ -94,6 +98,9 @@ struct ChatView: View {
             }
             .defaultScrollAnchor(.bottom)
             .onChange(of: session.timeline.count) {
+                if isNearBottom { withAnimation { proxy.scrollTo("latest", anchor: .bottom) } }
+            }
+            .onChange(of: session.isAwaitingAgentResponse) {
                 if isNearBottom { withAnimation { proxy.scrollTo("latest", anchor: .bottom) } }
             }
             .onChange(of: isNearBottom) {
@@ -453,6 +460,38 @@ private struct AgentProcessingView: View {
     }
     private func color(_ status: String) -> Color {
         status == "failed" ? .red : status == "running" ? .orange : .green
+    }
+}
+
+private struct AgentThinkingView: View {
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 10) {
+            Image(systemName: "sparkles")
+                .font(.caption.bold())
+                .foregroundStyle(.white)
+                .frame(width: 30, height: 30)
+                .background(SoftnixTheme.blue, in: Circle())
+                .accessibilityHidden(true)
+            HStack(spacing: 10) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Softnix is thinking…")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 16))
+            .overlay {
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(Color(.separator).opacity(0.28))
+            }
+            .shadow(color: .black.opacity(0.035), radius: 8, y: 2)
+            Spacer(minLength: 4)
+        }
+        .padding(.horizontal, 14)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Softnix is thinking")
     }
 }
 

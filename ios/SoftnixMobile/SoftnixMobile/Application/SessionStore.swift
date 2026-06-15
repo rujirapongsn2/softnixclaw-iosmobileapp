@@ -14,6 +14,7 @@ final class SessionStore {
     private var state = ChatState()
     private var restored = false
     private var failedAttachments: [String: [PendingAttachment]] = [:]
+    private var awaitingAgentSessionIDs: Set<String> = []
 
     var credential: AppCredential?
     var isBusy = false
@@ -37,6 +38,7 @@ final class SessionStore {
     var activeConversation: Conversation? { conversations.first { $0.id == activeSessionID } }
     var timeline: [TimelineItem] { activeConversation.map { reducer.timeline(for: $0) } ?? [] }
     var isAgentRunning: Bool { activeConversation?.messages.last?.isProcessing == true }
+    var isAwaitingAgentResponse: Bool { awaitingAgentSessionIDs.contains(activeSessionID) }
 
     init() {
         let api = APIClient()
@@ -146,6 +148,7 @@ final class SessionStore {
             attachments: attachmentMetadata
         )
         reducer.reduceOptimistic(state: &state, event: optimistic, fallbackDeviceID: credential.deviceID)
+        awaitingAgentSessionIDs.insert(state.activeSessionID)
         persistSoon(); isSending = true
         do {
             let outgoing = try await AttachmentUploadHandler().prepare(selected) { [weak self] id, progress in
@@ -166,6 +169,7 @@ final class SessionStore {
         } catch {
             failedAttachments[messageID] = selected
             reducer.setDelivery(state: &state, messageID: messageID, delivery: .failed, error: error.localizedDescription)
+            awaitingAgentSessionIDs.remove(state.activeSessionID)
             isSending = false; errorMessage = error.localizedDescription; persistSoon()
             return false
         }
@@ -174,6 +178,7 @@ final class SessionStore {
     func retry(messageID: String) async {
         guard let credential, let message = findMessage(messageID), message.deliveryState == .failed else { return }
         reducer.setDelivery(state: &state, messageID: messageID, delivery: .sending)
+        awaitingAgentSessionIDs.insert(message.sessionID)
         do {
             let pending = failedAttachments[messageID] ?? []
             let attachments = try await AttachmentUploadHandler().prepare(pending) { _, _ in }
@@ -186,6 +191,7 @@ final class SessionStore {
             reducer.setDelivery(state: &state, messageID: messageID, delivery: .sent)
         } catch {
             reducer.setDelivery(state: &state, messageID: messageID, delivery: .failed, error: error.localizedDescription)
+            awaitingAgentSessionIDs.remove(message.sessionID)
             errorMessage = error.localizedDescription
         }
         persistSoon()
@@ -341,6 +347,7 @@ final class SessionStore {
         for event in events {
             let before = state.conversations.first(where: { $0.id == event.sessionID })?.messages.count ?? 0
             reducer.reduce(state: &state, event: event, fallbackDeviceID: credential.deviceID, activeSessionID: preferred)
+            clearAwaitingAgentResponse(for: event, fallbackDeviceID: credential.deviceID)
             if event.sessionID != state.activeSessionID,
                let index = state.conversations.firstIndex(where: { $0.id == event.sessionID }),
                state.conversations[index].messages.count > before {
@@ -395,6 +402,11 @@ final class SessionStore {
     }
     private func findMessage(_ id: String) -> ChatMessage? {
         state.conversations.lazy.flatMap(\.messages).first { $0.id == id }
+    }
+    private func clearAwaitingAgentResponse(for event: ChatEvent, fallbackDeviceID: String) {
+        guard (ChatRole(rawValue: event.role ?? "") ?? .agent) == .agent else { return }
+        let sessionID = event.sessionID?.nilIfEmpty ?? "mobile-\(fallbackDeviceID)"
+        awaitingAgentSessionIDs.remove(sessionID)
     }
     private var sessionAudioID: String? {
         get { audio.playingAttachmentID }
