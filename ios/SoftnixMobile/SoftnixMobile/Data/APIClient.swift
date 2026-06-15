@@ -13,7 +13,9 @@ enum AppError: LocalizedError, Sendable, Equatable {
         case .noSpeech: "No speech was detected."
         case .server(let message), .revoked(let message): message
         case .transcription(let message, let code):
-            code == "groq_key_missing" ? "Voice transcription is not configured on this Softnix server." : message
+            code == "groq_key_missing"
+            ? "Voice transcription is not configured for this Softnix instance. Ask an admin to set the Groq API key in Providers, then try recording again."
+            : message
         case .keychain: "Unable to securely save this session."
         }
     }
