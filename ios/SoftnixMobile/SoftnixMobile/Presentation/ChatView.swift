@@ -370,6 +370,7 @@ private struct SoftnixWelcomeBackground: View {
 private struct MessageBubble: View {
     @Environment(SessionStore.self) private var session
     let message: ChatMessage
+    @State private var didCopy = false
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
             if message.role == .agent {
@@ -407,6 +408,16 @@ private struct MessageBubble: View {
                     ForEach(message.cards) { card in WorkflowCardView(card: card, sessionID: message.sessionID) }
                     HStack(spacing: 6) {
                         Text(message.timestamp, style: .time)
+                        if !message.text.isEmpty {
+                            Button {
+                                copyMessageText()
+                            } label: {
+                                Label(didCopy ? "Copied" : "Copy", systemImage: didCopy ? "checkmark" : "doc.on.doc")
+                                    .labelStyle(.iconOnly)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(didCopy ? "Copied message" : "Copy message")
+                        }
                         if message.deliveryState == .sending { ProgressView().controlSize(.mini) }
                         if message.deliveryState == .failed {
                             Button("Retry") { Task { await session.retry(messageID: message.id) } }
@@ -438,6 +449,15 @@ private struct MessageBubble: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(message.role == .user ? "You" : "Softnix"): \(message.text)")
+    }
+
+    private func copyMessageText() {
+        UIPasteboard.general.string = message.text
+        didCopy = true
+        Task {
+            try? await Task.sleep(for: .seconds(1.2))
+            didCopy = false
+        }
     }
 }
 
