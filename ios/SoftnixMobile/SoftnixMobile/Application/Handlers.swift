@@ -91,41 +91,49 @@ actor PollingFallbackHandler {
 struct MessageSendHandler {
     let api: APIClient
     func send(credential: AppCredential, message: ChatMessage, attachments: [OutgoingAttachment]) async throws {
-        try await withTimeout(seconds: attachments.isEmpty ? 45 : 90) {
+        try await withOperationTimeout(seconds: attachments.isEmpty ? 45 : 90) {
             _ = try await api.send(credential: credential, text: message.text, messageID: message.id,
                                    sessionID: message.sessionID, replyTo: message.replyTo,
                                    threadRootID: message.threadRootID, attachments: attachments)
-        }
-    }
-
-    private func withTimeout(seconds: TimeInterval, operation: @escaping @Sendable () async throws -> Void) async throws {
-        try await withThrowingTaskGroup(of: Void.self) { group in
-            group.addTask { try await operation() }
-            group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-                throw AppError.requestTimedOut
-            }
-            try await group.next()
-            group.cancelAll()
         }
     }
 }
 
 struct AttachmentUploadHandler {
     static let maximumBytes = 15 * 1024 * 1024
-    func prepare(_ pending: [PendingAttachment], progress: @MainActor @Sendable (UUID, Double) -> Void) async throws -> [OutgoingAttachment] {
-        var output: [OutgoingAttachment] = []
-        for item in pending {
-            guard item.size <= Self.maximumBytes else { throw AppError.attachmentTooLarge }
-            await progress(item.id, 0.15)
-            let data = try Data(contentsOf: item.url, options: .mappedIfSafe)
-            try Task.checkCancellation()
-            await progress(item.id, 0.7)
-            output.append(OutgoingAttachment(name: item.name, type: item.mimeType,
-                                             size: data.count, dataBase64: data.base64EncodedString()))
-            await progress(item.id, 1)
+    func prepare(_ pending: [PendingAttachment], progress: @escaping @MainActor @Sendable (UUID, Double) -> Void) async throws -> [OutgoingAttachment] {
+        try await withOperationTimeout(seconds: pending.isEmpty ? 5 : 30) {
+            var output: [OutgoingAttachment] = []
+            for item in pending {
+                guard item.size <= Self.maximumBytes else { throw AppError.attachmentTooLarge }
+                await progress(item.id, 0.15)
+                let encoded = try await Task.detached(priority: .userInitiated) {
+                    let data = try Data(contentsOf: item.url)
+                    return OutgoingAttachment(name: item.name, type: item.mimeType,
+                                              size: data.count, dataBase64: data.base64EncodedString())
+                }.value
+                try Task.checkCancellation()
+                await progress(item.id, 1)
+                output.append(encoded)
+            }
+            return output
         }
-        return output
+    }
+}
+
+private func withOperationTimeout<T: Sendable>(
+    seconds: TimeInterval,
+    operation: @escaping @Sendable () async throws -> T
+) async throws -> T {
+    try await withThrowingTaskGroup(of: T.self) { group in
+        group.addTask { try await operation() }
+        group.addTask {
+            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            throw AppError.requestTimedOut
+        }
+        defer { group.cancelAll() }
+        guard let result = try await group.next() else { throw AppError.requestTimedOut }
+        return result
     }
 }
 
