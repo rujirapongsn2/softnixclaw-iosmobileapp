@@ -1,7 +1,7 @@
 import Foundation
 
 enum AppError: LocalizedError, Sendable, Equatable {
-    case invalidServerURL, invalidPairingCode, invalidResponse, attachmentTooLarge, noSpeech
+    case invalidServerURL, invalidPairingCode, invalidResponse, attachmentTooLarge, noSpeech, requestTimedOut
     case server(String), revoked(String), transcription(String, String?), keychain(OSStatus)
 
     var errorDescription: String? {
@@ -11,6 +11,7 @@ enum AppError: LocalizedError, Sendable, Equatable {
         case .invalidResponse: "The server returned an unsupported response."
         case .attachmentTooLarge: "Each attachment must be 15 MB or smaller."
         case .noSpeech: "No speech was detected."
+        case .requestTimedOut: "The upload is taking too long. Check the connection and retry with the same message."
         case .server(let message), .revoked(let message): message
         case .transcription(let message, let code):
             code == "groq_key_missing"

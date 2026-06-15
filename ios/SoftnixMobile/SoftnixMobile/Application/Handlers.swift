@@ -91,9 +91,23 @@ actor PollingFallbackHandler {
 struct MessageSendHandler {
     let api: APIClient
     func send(credential: AppCredential, message: ChatMessage, attachments: [OutgoingAttachment]) async throws {
-        _ = try await api.send(credential: credential, text: message.text, messageID: message.id,
-                               sessionID: message.sessionID, replyTo: message.replyTo,
-                               threadRootID: message.threadRootID, attachments: attachments)
+        try await withTimeout(seconds: attachments.isEmpty ? 45 : 90) {
+            _ = try await api.send(credential: credential, text: message.text, messageID: message.id,
+                                   sessionID: message.sessionID, replyTo: message.replyTo,
+                                   threadRootID: message.threadRootID, attachments: attachments)
+        }
+    }
+
+    private func withTimeout(seconds: TimeInterval, operation: @escaping @Sendable () async throws -> Void) async throws {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask { try await operation() }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                throw AppError.requestTimedOut
+            }
+            try await group.next()
+            group.cancelAll()
+        }
     }
 }
 

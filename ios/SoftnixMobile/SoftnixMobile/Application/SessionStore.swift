@@ -19,6 +19,7 @@ final class SessionStore {
     var credential: AppCredential?
     var isBusy = false
     var isSending = false
+    var sendStatus: String?
     var isConnected = false
     var errorMessage: String?
     var pendingAttachments: [PendingAttachment] = []
@@ -149,12 +150,14 @@ final class SessionStore {
         )
         reducer.reduceOptimistic(state: &state, event: optimistic, fallbackDeviceID: credential.deviceID)
         awaitingAgentSessionIDs.insert(state.activeSessionID)
+        sendStatus = selected.isEmpty ? "Sending message…" : "Preparing \(selected.count) attachment\(selected.count == 1 ? "" : "s")…"
         persistSoon(); isSending = true
         do {
             let outgoing = try await AttachmentUploadHandler().prepare(selected) { [weak self] id, progress in
                 guard let self, let index = self.pendingAttachments.firstIndex(where: { $0.id == id }) else { return }
                 self.pendingAttachments[index].progress = progress
             }
+            sendStatus = selected.isEmpty ? "Sending message…" : "Uploading \(selected.count) attachment\(selected.count == 1 ? "" : "s")…"
             guard let message = findMessage(messageID) else { throw AppError.invalidResponse }
             try await AuthenticationInterceptor(onRevoked: { [weak self] in self?.handleRevoked() }).run {
                 try await MessageSendHandler(api: self.api).send(
@@ -164,13 +167,13 @@ final class SessionStore {
             reducer.setDelivery(state: &state, messageID: messageID, delivery: .sent)
             selected.forEach { try? FileManager.default.removeItem(at: $0.url) }
             failedAttachments.removeValue(forKey: messageID)
-            pendingAttachments.removeAll(); replyTarget = nil; isSending = false; persistSoon()
+            pendingAttachments.removeAll(); replyTarget = nil; isSending = false; sendStatus = nil; persistSoon()
             return true
         } catch {
             failedAttachments[messageID] = selected
             reducer.setDelivery(state: &state, messageID: messageID, delivery: .failed, error: error.localizedDescription)
             awaitingAgentSessionIDs.remove(state.activeSessionID)
-            isSending = false; errorMessage = error.localizedDescription; persistSoon()
+            isSending = false; sendStatus = nil; errorMessage = error.localizedDescription; persistSoon()
             return false
         }
     }
@@ -179,6 +182,7 @@ final class SessionStore {
         guard let credential, let message = findMessage(messageID), message.deliveryState == .failed else { return }
         reducer.setDelivery(state: &state, messageID: messageID, delivery: .sending)
         awaitingAgentSessionIDs.insert(message.sessionID)
+        sendStatus = "Retrying message…"
         do {
             let pending = failedAttachments[messageID] ?? []
             let attachments = try await AttachmentUploadHandler().prepare(pending) { _, _ in }
@@ -194,6 +198,7 @@ final class SessionStore {
             awaitingAgentSessionIDs.remove(message.sessionID)
             errorMessage = error.localizedDescription
         }
+        sendStatus = nil
         persistSoon()
     }
 
@@ -311,6 +316,7 @@ final class SessionStore {
         credential = nil; state = ChatState(); pendingAttachments.forEach { try? FileManager.default.removeItem(at: $0.url) }
         failedAttachments.values.flatMap { $0 }.forEach { try? FileManager.default.removeItem(at: $0.url) }
         failedAttachments.removeAll()
+        sendStatus = nil
         pendingAttachments.removeAll(); KeychainStore.clear()
         Task { try? await persistence.clear() }
         HTTPCookieStorage.shared.removeCookies(since: .distantPast)

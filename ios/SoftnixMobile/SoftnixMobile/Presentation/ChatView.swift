@@ -128,6 +128,19 @@ struct ChatView: View {
                     }.padding(.horizontal)
                 }
             }
+            if let sendStatus = session.sendStatus {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(sendStatus)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(sendStatus)
+            }
             HStack(alignment: .bottom, spacing: 9) {
                 Button { importerPresented = true } label: { Image(systemName: "paperclip").frame(width: 34, height: 38) }
                     .accessibilityLabel("Add attachment")
